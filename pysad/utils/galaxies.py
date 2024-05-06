@@ -58,7 +58,7 @@ class GalaxyDB:
         with open(self.path, newline='') as csvfile:
             rows = pandas.read_csv(csvfile, skiprows=start, nrows=limit)
 
-            for index, row in enumerate(rows.values):
+            for row in rows.values:
                 result.append({'name': sanitize(str(row[0])), 'ra_hours': row[1] / 15., 'dec_degs': row[2]})
 
         return result
