@@ -15,11 +15,11 @@ def execute(**kwargs) -> int:
     :return: status code
     """
     with open(f'pysad/results/{kwargs["event"]}/results.json', 'r') as f:
-        observations = json.load(f)
+        results = json.load(f)
 
-    for obs in observations:
+    for obs in results['observations']:
         try:
-            api.update_observation(**{'id': observations[obs]['id'], 'state': 'canceled'})
+            api.update_observation(**{'id': obs['id'], 'state': 'canceled'})
         except RuntimeError as e:
             logging.exception(e)
 

@@ -1,6 +1,6 @@
 import json
 import logging
-from typing import Dict, List
+import os
 
 from pysad.skynet import api
 from pysad.skynet.observation import Observation
@@ -23,13 +23,27 @@ def execute(**kwargs) -> int:
 
     :return: status code
     """
+    if not is_new_event(kwargs['event']):
+        raise RuntimeError(f'{kwargs["event"]} is already being managed. '
+                           f'Use the "update" action instead.')
+
     obs_requests = create_obs_requests(**kwargs)
     results = submit_obs_requests(obs_requests)
 
     return log_results(kwargs['event'], results)
 
 
-def create_obs_requests(**kwargs) -> List[Dict]:
+def is_new_event(event: str) -> bool:
+    """ Checks if there is a results file for the provided event. If
+    there is no results file, the event is considered new.
+
+    :param event: event name
+    :return: True if event is new, False otherwise
+    """
+    return not os.path.exists(f'pysad/results/{event}/results.json')
+
+
+def create_obs_requests(**kwargs) -> list[dict]:
     """ Creates a serializable dictionary for each observation object
     that can be submitted via the Skynet API.
 
@@ -41,25 +55,20 @@ def create_obs_requests(**kwargs) -> List[Dict]:
             - tel_section {str}: telescope section config name
         :Optional:
             - max_obs_per_tele (int): max num of obs per telescope
+            - galaxies (dict): name, ra, dec for each galaxy
 
     :return: list of dictionary observation requests
     """
-    try:
-        galaxies_per_telescope = kwargs['max_obs_per_tele']
-    except KeyError:
-        galaxies_per_telescope = 20
-
-    # Telescopes used for the observations
-    telescopes = get_telescope_list(kwargs['tel_section'])
-
-    # Gets the exact amount of galaxies based on the number of provided telescopes
-    galaxies = GalaxyDB(kwargs['event']).get(limit=len(telescopes) * galaxies_per_telescope)
+    kwargs = check_kwargs(**kwargs)
 
     obs_requests, index = [], 0
-    for telescope in telescopes:
-        for _ in range(galaxies_per_telescope):
-            if index < len(galaxies):
-                obs = Observation(telescope, galaxies[index], kwargs['obs_section'], kwargs['exp_section'])
+    for telescope in kwargs['telescopes']:
+        for _ in range(kwargs['max_obs_per_tele']):
+            if index < len(kwargs['galaxies']):
+                obs = Observation(telescope=telescope,
+                                  galaxy=kwargs['galaxies'][index],
+                                  section=kwargs['obs_section'],
+                                  exp_section=kwargs['exp_section'])
                 obs_requests.append(obs.to_dict())
                 index += 1
             else:
@@ -68,13 +77,13 @@ def create_obs_requests(**kwargs) -> List[Dict]:
     return obs_requests
 
 
-def submit_obs_requests(requests: List[Dict]) -> Dict:
+def submit_obs_requests(requests: list[dict]) -> dict:
     """ Submits the observation requests to the Skynet API.
 
     :param requests: List of observation requests
     :return:
     """
-    results = {}
+    results = {'observations': []}
 
     for request in requests:
         try:
@@ -82,12 +91,17 @@ def submit_obs_requests(requests: List[Dict]) -> Dict:
         except RuntimeError as e:
             logging.exception(e)
         else:
-            results[obs['name']] = {'id': obs['id'], 'telescope': request['telescopes']}
+            results['observations'].append({
+                'id': obs['id'],
+                'state': 'active',
+                'name': obs['name'],
+                'telescope': request['telescopes']}
+            )
 
     return results
 
 
-def get_telescope_list(telescope_section: str) -> list[str | None] | str | None:
+def get_telescopes(telescope_section: str) -> list[str | None] | str | None:
     """ Returns a list of all telescope names in the provided telescope
     config option.
 
@@ -99,14 +113,32 @@ def get_telescope_list(telescope_section: str) -> list[str | None] | str | None:
     telescopes = config.get(settings, telescope_section, 'telescopes')
     telescopes = config.expected_type(telescopes)
 
-    if isinstance(telescopes, str):
-        return [telescopes]
-
-    if isinstance(telescopes, list):
-        return telescopes
+    return telescopes if isinstance(telescopes, list) else [telescopes]
 
 
-def log_results(event: str, results: Dict) -> int:
+def check_kwargs(**kwargs):
+    """ Checks for optional keyword arguments and populates them if they
+    are not provided.
+
+    :param kwargs: Accepted keyword arguments include:
+        - max_obs_per_tele (int): max num of obs per telescope
+        - galaxies (dict): name, ra, dec for each galaxy
+    :return: dictionary with optional params defined
+    """
+    if 'max_obs_per_tele' not in kwargs:
+        kwargs['max_obs_per_tele'] = 20
+
+    if 'telescopes' not in kwargs:
+        kwargs['telescopes'] = get_telescopes(kwargs['tel_section'])
+
+    if 'galaxies' not in kwargs:
+        limit = len(kwargs['telescopes']) * kwargs['max_obs_per_tele']
+        kwargs['galaxies'] = GalaxyDB(kwargs['event']).get(limit=limit)
+
+    return kwargs
+
+
+def log_results(event: str, results: dict) -> int:
     """ Writes the results dictionary to 'gwsad/results/<event>/results.json'.
 
     :param event: Event name
