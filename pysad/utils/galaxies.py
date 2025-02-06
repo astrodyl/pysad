@@ -7,8 +7,10 @@ from pathlib import Path
 
 from pysad.utils.string import sanitize
 
+# DONE: Sort galaxies by probability 
 
 # TODO: Add support for FITs files - GalaxyDB -> FitsDB, CsvDB (?)
+# TODO: Sort galaxies by probability after querying, then overwrite file
 
 class GalaxyDB:
     def __init__(self, event: str):
@@ -57,6 +59,9 @@ class GalaxyDB:
         result = []
         with open(self.path, newline='') as csvfile:
             rows = pandas.read_csv(csvfile, skiprows=start, nrows=limit)
+
+            rows['probability'] = rows['P_3D'] * rows['P_LumW1']
+            rows = rows.sort_values(by='probability', ascending=False)
 
             for row in rows.values:
                 result.append({'name': sanitize(str(row[0])), 'ra_hours': row[1] / 15., 'dec_degs': row[2]})
